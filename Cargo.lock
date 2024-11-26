@@ -149,7 +149,7 @@ checksum = "24188a676b6ae68c3b2cb3a01be17fbf7240ce009799bb56d5b1409051e78fde"
 
 [[package]]
 name = "wait"
-version = "2.12.1"
+version = "2.12.2"
 dependencies = [
  "atomic-counter",
  "env_logger",

@@ -135,6 +135,7 @@ pub fn wait(sleep: &mut dyn sleeper::Sleeper, config: &Config, on_timeout: &mut 
 
 pub fn parse_command<S: Into<String>>(
     raw_cmd: S,
+    mut args: Vec<String>,
 ) -> Result<Option<(Command, String)>, shell_words::ParseError> {
     let s = raw_cmd.into();
     let command_string = s.trim().to_string();
@@ -142,6 +143,15 @@ pub fn parse_command<S: Into<String>>(
         return Ok(None);
     }
     let mut argv = shell_words::split(&command_string)?;
+    args.remove(0);
+    if !args.is_empty() {
+        argv.extend(args.clone());
+        warn!("{}", LINE_SEPARATOR);
+        warn!(
+            "docker-compose-wait - Appending pass-through arguments {:?} to the WAIT_COMMAND!",
+            args
+        );
+    }
     Ok(Some((
         Command {
             program: argv.remove(0),
@@ -151,11 +161,11 @@ pub fn parse_command<S: Into<String>>(
     )))
 }
 
-pub fn config_from_env() -> Config {
+pub fn config_from_env(args: Vec<String>) -> Config {
     Config {
         hosts: env_reader::env_var("WAIT_HOSTS", "".to_string()),
         paths: env_reader::env_var("WAIT_PATHS", "".to_string()),
-        command: parse_command(env_reader::env_var("WAIT_COMMAND", "".to_string()))
+        command: parse_command(env_reader::env_var("WAIT_COMMAND", "".to_string()), args)
             .expect("failed to parse command value from environment"),
         global_timeout: to_int(&legacy_or_new("WAIT_HOSTS_TIMEOUT", "WAIT_TIMEOUT", ""), 30),
         tcp_connection_timeout: to_int(
@@ -230,7 +240,7 @@ mod test {
     fn config_should_use_default_values() {
         let _guard = TEST_MUTEX.lock().unwrap();
         set_env("", "", "10o", "10", "", "abc", "");
-        let config = config_from_env();
+        let config = config_from_env(Vec::new());
         assert_eq!("".to_string(), config.hosts);
         assert_eq!(30, config.global_timeout);
         assert_eq!(5, config.tcp_connection_timeout);
@@ -242,7 +252,7 @@ mod test {
     fn should_get_config_values_from_env() {
         let _guard = TEST_MUTEX.lock().unwrap();
         set_env("localhost:1234", "20", "2", "3", "4", "23", "");
-        let config = config_from_env();
+        let config = config_from_env(Vec::new());
         assert_eq!("localhost:1234".to_string(), config.hosts);
         assert_eq!(20, config.global_timeout);
         assert_eq!(23, config.tcp_connection_timeout);
@@ -255,7 +265,7 @@ mod test {
     fn should_get_default_config_values() {
         let _guard = TEST_MUTEX.lock().unwrap();
         set_env("localhost:1234", "", "", "", "", "", "");
-        let config = config_from_env();
+        let config = config_from_env(Vec::new());
         assert_eq!("localhost:1234".to_string(), config.hosts);
         assert_eq!(30, config.global_timeout);
         assert_eq!(5, config.tcp_connection_timeout);
@@ -269,7 +279,7 @@ mod test {
     fn should_panic_when_given_an_invalid_command() {
         let _guard = TEST_MUTEX.lock().unwrap();
         set_env("", "", "", "", "", "", "a 'b");
-        config_from_env();
+        config_from_env(Vec::new());
     }
 
     fn set_env(
@@ -292,20 +302,20 @@ mod test {
 
     #[test]
     fn parse_command_fails_when_command_is_invalid() {
-        assert!(parse_command(" intentionally 'invalid").is_err())
+        assert!(parse_command(" intentionally 'invalid", Vec::new()).is_err())
     }
 
     #[test]
     fn parse_command_returns_none_when_command_is_empty() {
         for c in &["", " \t\n\r\n"] {
-            let p = parse_command(c.to_string()).unwrap();
+            let p = parse_command(c.to_string(), Vec::new()).unwrap();
             assert!(p.is_none());
         }
     }
 
     #[test]
     fn parse_command_handles_commands_without_args() {
-        let (command, command_string) = parse_command("ls".to_string()).unwrap().unwrap();
+        let (command, command_string) = parse_command("ls".to_string(), Vec::new()).unwrap().unwrap();
         assert_eq!("ls", command_string);
         assert_eq!("ls", command.program);
         assert_eq!(Vec::<String>::new(), command.argv);
@@ -313,7 +323,7 @@ mod test {
 
     #[test]
     fn parse_command_handles_commands_with_args() {
-        let (command, command_string) = parse_command("ls -al".to_string()).unwrap().unwrap();
+        let (command, command_string) = parse_command("ls -al".to_string(), Vec::new()).unwrap().unwrap();
         assert_eq!("ls -al", command_string);
         assert_eq!("ls", command.program);
         assert_eq!(vec!["-al"], command.argv);
@@ -321,7 +331,7 @@ mod test {
 
     #[test]
     fn parse_command_discards_leading_and_trailing_whitespace() {
-        let (command, command_string) = parse_command("     hello world    ".to_string())
+        let (command, command_string) = parse_command("     hello world    ".to_string(), Vec::new())
             .unwrap()
             .unwrap();
         assert_eq!("hello world", command_string);
@@ -332,7 +342,7 @@ mod test {
     #[test]
     fn parse_command_strips_shell_quotes() {
         let (command, command_string) =
-            parse_command(" find . -type \"f\" -name '*.rs' ".to_string())
+            parse_command(" find . -type \"f\" -name '*.rs' ".to_string(), Vec::new())
                 .unwrap()
                 .unwrap();
         assert_eq!("find . -type \"f\" -name '*.rs'", command_string);
